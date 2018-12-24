@@ -10,6 +10,57 @@ serves = {}
 
 
 def parse_recv_data(msg):
+    """
+    https://www.cnblogs.com/JetpropelledSnake/p/9033064.html
+    报文格式：
+    1.FIN: 占 1bit
+        0：不是消息的最后一个分片
+        1：是消息的最后一个分片
+
+    2.RSV1, RSV2, RSV3：各占 1bit，共3bit
+        一般情况下全为 0。当客户端、服务端协商采用 WebSocket 扩展时，这三个标志位可以非 0，且值的含义由扩展进行定义。如果出现非零的值，且并没有采用 WebSocket 扩展，连接出错。
+    3.Opcode: 4bit
+        \x0：表示一个延续帧。当 Opcode 为 0 时，表示本次数据传输采用了数据分片，当前收到的数据帧为其中一个数据分片；
+        \x1：表示这是一个文本帧（text frame）；
+        \x2：表示这是一个二进制帧（binary frame）；
+        \x3-7：保留的操作代码，用于后续定义的非控制帧；
+        \x8：表示连接断开；
+        \x9：表示这是一个心跳请求（ping）；
+        \xA：表示这是一个心跳响应（pong）；
+        \xB-F：保留的操作代码，用于后续定义的控制帧。
+
+    4.Mask: 1bit
+        表示是否要对数据载荷进行掩码异或操作。
+        0：否
+        1：是
+
+    5.Payload length: 7bit or (7 + 16)bit or (7 + 64)bit
+        表示数据载荷的长度。
+        0~126：数据的长度等于该值；
+        126：后续 2 个字节代表一个 16 位的无符号整数，该无符号整数的值为数据的长度；
+        127：后续 8 个字节代表一个 64 位的无符号整数（最高位为 0），该无符号整数的值为数据的长度。
+
+    6.Masking-key: 0 or 4bytes
+        当 Mask 为 1，则携带了 4 字节的 Masking-key；
+        当 Mask 为 0，则没有 Masking-key。
+        掩码算法：按位做循环异或运算，先对该位的索引取模来获得 Masking-key 中对应的值 x，然后对该位与 x 做异或，从而得到真实的 byte 数据。
+        注意：掩码的作用并不是为了防止数据泄密，而是为了防止早期版本的协议中存在的代理缓存污染攻击（proxy cache poisoning attacks）等问题。
+
+    7.Payload Data: 载荷数据
+
+    eg:
+        现有一个待解析报文，（8bit=1Byte）
+        * 一开始的8bit为报文类型标志位，常用的有
+            1000 0001 即129代表字符串数据
+            1000 0002 即130代表字节流数据
+        * 接着的报文消息长度标志位是变长的，第一位通常为1，可以舍弃
+          故先和\x7f进行与操作取后7位，由前7位决定该标志位的长度，
+          譬如：
+            消息长度是127，则与运算后值为126，
+            根据126确定再取2个字节即16位，可以得到\x00\x7f，即127
+        * 接着是掩码部分，为4个字节，一般字符编码成字节都会带上
+          根据解码规则用掩码即可对数据进行解码
+        """
     v = msg[1] & 0x7f
     if v == 0x7e:
         p = 4
@@ -27,6 +78,27 @@ def parse_recv_data(msg):
 
 
 def parse_send_data(message):
+    """
+    Format	C Type	            Python type	        Standard size
+        x	pad byte	        no value
+        c	char	            string of length 1	1
+        b	signed char	        integer	            1
+        B	unsigned char	    integer	            1
+        ?	_Bool	            bool	            1
+        h	short	            integer	            2
+        H	unsigned short	    integer	            2
+        i	int	                integer	            4
+        I	unsigned int	    integer	            4
+        l	long	            integer	            4
+        L	unsigned long	    integer	            4
+        q	long long	        integer	            8
+        Q	unsigned long long	integer         	8
+        f	float	            float	            4
+        d	double	            float	            8
+        s	char[]	            string
+        p	char[]	            string
+        P	void *	            integer
+    """
     msgLen = len(message)
     backMsgList = []
     backMsgList.append(struct.pack('B', 129))
@@ -155,6 +227,7 @@ class websocket_server(threading.Thread):
         response_key_str = str(token)
         response_key_str = response_key_str[2:30]
         response_key_entity = "Sec-WebSocket-Accept: " + response_key_str + "\r\n"
+        # send separately or together? seems it's same.
         connection.send(bytes("HTTP/1.1 101 Web Socket Protocol Handshake\r\n", encoding="utf8"))
         connection.send(bytes("Upgrade: websocket\r\n", encoding="utf8"))
         connection.send(bytes(response_key_entity, encoding="utf8"))

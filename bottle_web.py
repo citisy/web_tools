@@ -1,10 +1,15 @@
-from bottle import route, run, static_file, request, post, get
+"""https://blog.csdn.net/happyteafriends/article/details/42552093"""
+
+
+from bottle import route, run, static_file, request, post, get, abort
 import json
+import os
 
 
 @get('/do_get')
 def do_get():
-    data = request.query.data
+    # data = request.query['data']  # default: ISO-8859-15 encoding
+    data = request.query.data   # utf8 encoding
     return data
 
 
@@ -22,9 +27,11 @@ im_str = '''
 '''
 
 
-@route('/img/<filename:re:.*\.png>')  # <filename> means all the file type
-def img(filename):
-    return static_file(filename, root='./img')
+@route('/<imgn>/<filename:re:.*\.png>')  # <filename> means all the file type
+def img(imgn, filename):
+    if not os.path.exists(imgn):      # unnecessary, 'cause the static_file would also raise 404 error
+        return abort(404)
+    return static_file(filename, root=imgn)
 
 
 @route('/show_img')
@@ -70,8 +77,19 @@ def upload():
 @route('/upload', method='POST')
 def do_upload():
     upload = request.files.get('file')
-    upload.save('./img', overwrite=True)  # if overwrite is false, when the file is exist, it will raise error
+    # overwrite is false, when the file is exist, it will raise error
+    upload.save('./img/%s' % upload.filename, overwrite=True)
     return upload_str
 
 
-run(host='0.0.0.0', port=8080)
+run(host='0.0.0.0', port=8080, server='wsgiref')
+"""
+about server:
+    wsgiref: serial
+    gunicorn: only unix, parallel
+    paste: parallel
+        attention: if use this framework in python3, u will rewrite the httpserver.py in line 309:
+            self.wsgi_write_chunk('') -> self.wsgi_write_chunk(b'')
+        so that when its status code is 304, it won't raise error
+        and, it can't support chinese charset
+"""
